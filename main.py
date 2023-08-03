@@ -1,13 +1,13 @@
-from typing import Annotated
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from data_models import *
 import pyodbc
 from data_models import *
 import bcrypt
 import datetime
-import os.path
+import json
+from typing import List, Dict
 
-save_path = 'D:\\BANCHANGTONG\\APIs\\bctAPIs\\images'
+save_path = "D:\\BANCHANGTONG\\APIs\\bctAPIs\\images"
 
 server = "DESKTOP-U71JKDK\\SQLEXPRESS"
 database = "banchangtong"
@@ -19,13 +19,28 @@ conn_str = f"Driver={{SQL Server}};Server={server};Database={database};UID={user
 
 
 @app.post("/insertProduct")
-async def insert_product(productCategory : str, createBy : int, imagePath : str, price : int, basePrice : str, material : list, diamond : list, gemstone : list, file: UploadFile):
+async def insert_product(
+    productCategory: str,
+    productCode: str,
+    createBy: int,
+    imagePath: str,
+    price: int,
+    basePrice: str,
+    material: list,
+    diamond: list,
+    gemstone: list,
+    file: UploadFile = File(),
+):
     time = datetime.datetime.now()
 
-    filename = (file.filename)
-    with open('{0}\\{1}'.format(save_path,filename), 'wb+') as f:
+    filename = file.filename
+    with open("{0}\\{1}".format(save_path, filename), "wb+") as f:
         f.write(file.file.read())
 
+    materialJSON = json.loads(material[0])
+    diamondJSON = json.loads(diamond[0])
+    gemstoneJSON = json.loads(gemstone[0])
+    print(diamondJSON)
     try:
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
@@ -33,55 +48,86 @@ async def insert_product(productCategory : str, createBy : int, imagePath : str,
         # Fetch the latest ProductId based on ProductCategory
         cursor.execute(
             "SELECT TOP 1 ProductId FROM [Product] WHERE ProductCategory = ? ORDER BY Id DESC",
-            (productCategory)
+            (productCategory),
         )
         row = cursor.fetchone()
-        print(row)
 
         if row:
             product_id = int(row[0]) + 1
-            product_code = productCategory + str(product_id)
-            print(product_code)
-            #print(material)
-
             # Batch insert for Product, ProductDetail, and ProductMaterial
 
-            # cursor.executemany(
-            #     "INSERT INTO Product (ProductCode, ProductId, ProductCategory, CreateDate, CreateBy) VALUES (?, ?, ?, ?, ?, ?)",
-            #     [(product_code, product_id, productCategory, time, createBy)]
-            # )
+            cursor.executemany(
+                "INSERT INTO Product (ProductCode, ProductId, ProductCategory, CreateDate, CreateBy) VALUES (?, ?, ?, ?, ?)",
+                [(productCode, product_id, productCategory, time, createBy)],
+            )
 
-            # cursor.executemany(
-            #     "INSERT INTO ProductDetail (ProductId, ImagePath, Price, BasePrice) VALUES (?, ?, ?, ?)",
-            #     [(product_id, imagePath, price, basePrice)]
-            # )
+            cursor.executemany(
+                "INSERT INTO ProductDetail (ProductId, ProductCode, ImagePath, Price, BasePrice) VALUES (?, ?, ?, ?, ?)",
+                [(product_id, productCode, imagePath, price, basePrice)],
+            )
 
-            # cursor.executemany(
-            #     "INSERT INTO ProductMaterial (ProductId, MaterialType, MaterialWeight, MaterialPercent) VALUES (?, ?, ?, ?)",
-            #     [(product_id, mat['MaterialType'], mat['MaterialWeight'], mat['MaterialPercent']) for mat in material]
-            # )
+            cursor.executemany(
+                "INSERT INTO ProductMaterial (ProductId, ProductCode, MaterialType, MaterialWeight, MaterialPercent) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        product_id,
+                        productCode,
+                        mat["MaterialType"],
+                        float(mat["MaterialWeight"]),
+                        float(mat["MaterialPercent"]),
+                    )
+                    for mat in materialJSON
+                ],
+            )
 
             # Batch insert for ProductDiamonds
-            # if diamond == []:
-            #     print("diamond ว่าง")
-            # else:
-            #     cursor.executemany(
-            #     "INSERT INTO ProductDiamonds (ProductId, Carat, Color, Cut, Clarity, Certificated, Amount, CreateDate, CreateBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            #     [(product_id, dia['Carat'], dia['Color'], dia['Cut'], dia['Clarity'], dia['Certificated'], dia['Amount'], time, createBy) for dia in diamond]
-            # )
+            if diamondJSON == []:
+                print("diamond ว่าง")
+            else:
+                cursor.executemany(
+                    "INSERT INTO ProductDiamonds (ProductId, ProductCode, Carat, Color, Cut, Clarity, Certificated, Amount, CreateDate, CreateBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            product_id,
+                            productCode,
+                            float(dia["Carat"]),
+                            int(dia["Color"]),
+                            dia["Cut"],
+                            dia["Clarity"],
+                            dia["Certificated"],
+                            int(dia["Amount"]),
+                            time,
+                            createBy,
+                        )
+                        for dia in diamondJSON
+                    ],
+                )
 
-            # if gemstone == []:
-            #     print("gemstone ว่าง")
-            # else:
-            #     cursor.executemany(
-            #     "INSERT INTO ProductGems (ProductId, Carat, Shape, Color, Price, CreateDate, CreateBy) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            #     [(product_id, gems['Carat'], gems['Shape'], gems['Color'], gems['Price'], time, createBy) for gems in gemstone]
-            # )
+            if gemstoneJSON == []:
+                print("gemstone ว่าง")
+            else:
+                cursor.executemany(
+                    "INSERT INTO ProductGems (ProductId, ProductCode Carat, CreateDate, CreateBy, Amount) VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            product_id,
+                            productCode,
+                            float(gems["Carat"]),
+                            time,
+                            createBy,
+                            int(gems["Amount"]),
+                        )
+                        for gems in gemstoneJSON
+                    ],
+                )
 
             # Commit the transaction after all insertions are done.
             conn.commit()
 
-            return {"message": "Insert Success", "data": [{"productCategory": productCategory, "diamond": diamond, "gemstone": gemstone, "material": material}]}
+            return {
+                "message": "Insert Success",
+                "data": [{"productCategory": productCategory}],
+            }
         else:
             return {"message": "Insert fail"}
 
@@ -93,29 +139,59 @@ async def insert_product(productCategory : str, createBy : int, imagePath : str,
         cursor.close()
         conn.close()
 
-@app.post("/getProduct")
-async def insert_product(data: GetProduct) -> dict:
+
+def execute_select_query(conn, query: str, params: tuple) -> List[Dict]:
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    columns = [column[0] for column in cursor.description]
+    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cursor.close()
+    return results
+
+
+@app.get("/getProduct/{id}/{productCode}")
+async def get_product(id: int, productCode: str) -> dict:
     try:
         conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT * FROM Product WHERE ProductId = ?", (data.productId)
+        product_query = "SELECT ProductCode, ProductId, ProductCategory, CreateDate, CreateBy FROM Product WHERE ProductId = ? AND ProductCode = ?"
+        product_detail_query = "SELECT ImagePath, Price, BasePrice FROM ProductDetail WHERE ProductId = ? AND ProductCode = ?"
+        product_diamonds_query = "SELECT Carat, Color, Cut, Clarity, Certificated, Amount, CreateDate, CreateBy FROM ProductDiamonds WHERE ProductId = ? AND ProductCode = ?"
+        product_gems_query = (
+            "SELECT * FROM ProductGems WHERE ProductId = ? AND ProductCode = ?"
         )
-            # Commit the transaction after all insertions are done.
-        columns = [column[0] for column in cursor.description]
-        results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        product_materials_query = "SELECT MaterialType, MaterialWeight, MaterialPercent FROM ProductMaterial WHERE ProductId = ? AND ProductCode = ?"
+
+        product_results = execute_select_query(conn, product_query, (id, productCode))
+        product_detail_results = execute_select_query(
+            conn, product_detail_query, (id, productCode)
+        )
+        product_diamonds_results = execute_select_query(
+            conn, product_diamonds_query, (id, productCode)
+        )
+        product_gems_results = execute_select_query(
+            conn, product_gems_query, (id, productCode)
+        )
+        product_materials_results = execute_select_query(
+            conn, product_materials_query, (id, productCode)
+        )
 
         conn.commit()
 
-        return {"message": "Get product detail Success", "data": results}
+        return {
+            "message": "Get product detail Success",
+            "product": product_results,
+            "productDetail": product_detail_results,
+            "productDiamonds": product_diamonds_results,
+            "productGems": product_gems_results,
+            "productMaterials": product_materials_results,
+        }
 
     except pyodbc.Error as e:
         print(f"Error during read: {e}")
         return {"message": "An error occurred during read"}
 
     finally:
-        cursor.close()
         conn.close()
 
 
@@ -134,10 +210,10 @@ async def register(data: RegisterData) -> dict:
 
         # Hash password
         hashed_password = hash_password(data.password)
-        
+
         # Insert new user
         insert_user(cursor, data.username, hashed_password)
-        
+
         conn.commit()
         return {"message": "User registered successfully"}
     except pyodbc.Error as e:
@@ -147,17 +223,20 @@ async def register(data: RegisterData) -> dict:
         cursor.close()
         conn.close()
 
+
 def is_existing_username(cursor, username: str) -> bool:
     query = "SELECT COUNT(*) FROM [User] WHERE username = ?"
     cursor.execute(query, username)
     existing_user_count = cursor.fetchone()[0]
     return existing_user_count > 0
 
+
 def hash_password(password: str) -> str:
     bytes_password = password.encode("utf-8")
     salt = bcrypt.gensalt()
     hashed_password = bcrypt.hashpw(bytes_password, salt)
     return hashed_password.decode("utf-8")
+
 
 def insert_user(cursor, username: str, password: str) -> None:
     query = "INSERT INTO [User] (Id, username, password) VALUES (?, ?, ?);"
@@ -173,21 +252,17 @@ async def login(data: LoginData) -> dict:
 
     try:
         cursor.execute(
-            "SELECT Id, password FROM [User] WHERE username = ?",
-            (data.username,)
+            "SELECT Id, password FROM [User] WHERE username = ?", (data.username,)
         )
         row = cursor.fetchone()
-        
+
         if row:
             stored_password = row.password
             is_password_match = bcrypt.checkpw(
                 data.password.encode("utf-8"), stored_password.encode("utf-8")
             )
             if is_password_match:
-                cursor.execute(
-                    "SELECT * FROM UserDetail WHERE Id = ?",
-                    (row.Id,)
-                )
+                cursor.execute("SELECT * FROM UserDetail WHERE Id = ?", (row.Id,))
                 columns = [column[0] for column in cursor.description]
                 results = [dict(zip(columns, row)) for row in cursor.fetchall()]
                 return {"message": "Login Success", "data": results}
