@@ -6,6 +6,8 @@ import bcrypt
 import datetime
 import json
 from typing import List, Dict
+import boto3
+from boto3.s3.transfer import TransferConfig
 
 save_path = "D:\\BANCHANGTONG\\APIs\\bctAPIs\\images"
 
@@ -16,6 +18,19 @@ password = ""
 app = FastAPI()
 
 conn_str = f"Driver={{SQL Server}};Server={server};Database={database};UID={username}"
+
+AWS_BUCKET_NAME = "banchangtong"
+AWS_REGION = "ap-southeast-1"
+
+
+def upload_image_to_s3(file, key):
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    transfer_config = TransferConfig(use_threads=False)
+    content_type = "image/jpeg"
+    extra_args = {"ContentType": content_type}
+    s3.upload_fileobj(
+        file, AWS_BUCKET_NAME, key, Config=transfer_config, ExtraArgs=extra_args
+    )
 
 
 @app.post("/insertProduct")
@@ -36,6 +51,26 @@ async def insert_product(
     filename = file.filename
     with open("{0}\\{1}".format(save_path, filename), "wb+") as f:
         f.write(file.file.read())
+
+    if file:
+        file.file.seek(0)
+        key = f"images/{file.filename}"
+        upload_image_to_s3(file.file, key)
+
+    def get_presigned_url(
+        key, expiration=3600
+    ):  # Expiration time in seconds (default: 1 hour)
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": AWS_BUCKET_NAME, "Key": key},
+            ExpiresIn=expiration,
+        )
+        return url
+
+    image_key = "images/${filename}"
+    url = get_presigned_url(image_key)
+    print(url)
 
     materialJSON = json.loads(material[0])
     diamondJSON = json.loads(diamond[0])
@@ -127,6 +162,7 @@ async def insert_product(
             return {
                 "message": "Insert Success",
                 "data": [{"productCategory": productCategory}],
+                "image": url,
             }
         else:
             return {"message": "Insert fail"}
