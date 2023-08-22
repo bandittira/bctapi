@@ -1,0 +1,6 @@
+esdk-obs-python==3.23.5
+fastapi
+pyodbc
+bcrypt
+uvicorn
+typing
