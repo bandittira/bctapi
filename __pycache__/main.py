@@ -1,4 +1,3 @@
-import os
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from data_models import *
 import pyodbc
@@ -7,8 +6,8 @@ import bcrypt
 import datetime
 import json
 from typing import List, Dict
-from obs import *
-from obs import PutObjectHeader
+import boto3
+from boto3.s3.transfer import TransferConfig
 
 save_path = "D:\\BANCHANGTONG\\APIs\\bctAPIs\\images"
 
@@ -19,28 +18,6 @@ password = ""
 app = FastAPI()
 
 conn_str = f"Driver={{SQL Server}};Server={server};Database={database};UID={username}"
-
-AK = "NYPVSW2I8OJV8H4F9O37"
-SK = "uOsWzZ2sjKovNZ0cGilH9XTkGUUNunP3xD0Uin1g"
-server = "https://obs.ap-southeast-2.myhuaweicloud.com"
-obsClient = ObsClient(access_key_id=AK, secret_access_key=SK, server=server)
-
-
-def uploadObjects(image, fileName):
-    headers = PutObjectHeader()
-    headers.contentType = "image/jpeg"
-    resp = obsClient.uploadFile("banchangtong", fileName, image, headers=headers)
-    if resp.status < 300:
-        # Return the request ID.
-        print("requestId:", resp.requestId)
-        print("objectUrl:", resp.body.objectUrl)
-        return resp.body.objectUrl
-    else:
-        # Return the error code.
-        print("errorCode:", resp.errorCode)
-        # Return error information.
-        print("errorMessage:", resp.errorMessage)
-
 
 # AWS_BUCKET_NAME = "banchangtong"
 # AWS_REGION = "ap-southeast-1"
@@ -70,27 +47,6 @@ async def getProductId(product_code: str) -> dict:
         return {"message": "Success", "results": results}
 
 
-@app.delete("/deleteProduct/{productCode}/{productId}")
-async def deleteProduct(productCode: str, productId: int) -> dict:
-    with pyodbc.connect(conn_str) as conn:
-        cursor = conn.cursor()
-
-        # Tables to delete from
-        tables_to_delete_from = [
-            "Product",
-            "ProductDetail",
-            "ProductDiamonds",
-            "ProductGems",
-            "ProductMaterial",
-        ]
-
-        for table in tables_to_delete_from:
-            query = f"DELETE FROM {table} WHERE ProductCode = ? AND ProductId = ?"
-            cursor.execute(query, (productCode, productId))
-
-        return {"message": "Success"}
-
-
 @app.get("/getAllProduct")
 async def getAllProduct():
     with pyodbc.connect(conn_str) as conn:
@@ -113,7 +69,7 @@ async def getProductIdLatest():
 
                 cursor.execute(
                     """
-                    SELECT TOP 5 p.ProductCode, p.ProductId, pd.Price, pd.BasePrice, pd.ImagePath, pd.ImageName
+                    SELECT TOP 5 p.ProductCode, p.ProductId, pd.Price, pd.BasePrice, pd.ImagePath
                     FROM product p
                     JOIN ProductDetail pd ON p.ProductId = pd.ProductId AND p.ProductCode = pd.ProductCode
                     ORDER BY p.Id DESC
@@ -131,10 +87,8 @@ async def getProductIdLatest():
         except pyodbc.Error as e:
             print(e)
 
-
-@app.put("/updateProduct")
-async def update_product(
-    productCategory: str,
+@app.put('/updateProduct')
+async def update_product(    productCategory: str,
     productCode: str,
     createBy: int,
     imagePath: str,
@@ -143,8 +97,7 @@ async def update_product(
     material: list,
     diamond: list,
     gemstone: list,
-    file: UploadFile = File(),
-):
+    file: UploadFile = File()):
     time = datetime.datetime.now()
 
     filename = file.filename
@@ -152,24 +105,8 @@ async def update_product(
         f.write(file.file.read())
 
     try:
-        conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
-
-        # Fetch the latest ProductId based on ProductCategory
-        cursor.execute(
-            "SELECT TOP 1 ProductId FROM [Product] WHERE ProductCategory = ? ORDER BY Id DESC",
-            (productCategory),
-        )
-        row = cursor.fetchone()
-
-    except pyodbc.Error as e:
-        print(f"Error during insert: {e}")
-        return {"message": "An error occurred during insert"}
-
-    finally:
-        cursor.close()
-        conn.close()
-
+    
+    except:
 
 @app.post("/insertProduct")
 async def insert_product(
@@ -185,13 +122,15 @@ async def insert_product(
     file: UploadFile = File(),
 ):
     time = datetime.datetime.now()
+
     filename = file.filename
     with open("{0}\\{1}".format(save_path, filename), "wb+") as f:
         f.write(file.file.read())
 
     if file:
         file.file.seek(0)
-        key = f"images\\{file.filename}"
+        key = f"images/{file.filename}"
+        # upload_image_to_s3(file.file, key)
 
     # def get_presigned_url(
     #     key, expiration=3600
@@ -211,6 +150,7 @@ async def insert_product(
     materialJSON = json.loads(material[0])
     diamondJSON = json.loads(diamond[0])
     gemstoneJSON = json.loads(gemstone[0])
+    print(diamondJSON)
     try:
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
@@ -232,17 +172,8 @@ async def insert_product(
             )
 
             cursor.executemany(
-                "INSERT INTO ProductDetail (ProductId, ProductCode, ImagePath, ImageName, Price, BasePrice) VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        product_id,
-                        productCode,
-                        uploadObjects(key, file.filename),
-                        imagePath,
-                        price,
-                        basePrice,
-                    )
-                ],
+                "INSERT INTO ProductDetail (ProductId, ProductCode, ImagePath, Price, BasePrice) VALUES (?, ?, ?, ?, ?)",
+                [(product_id, productCode, imagePath, price, basePrice)],
             )
 
             cursor.executemany(
@@ -301,8 +232,8 @@ async def insert_product(
                 )
 
             # Commit the transaction after all insertions are done.
-            os.remove(key)
             conn.commit()
+
             return {
                 "message": "Insert Success",
                 "data": [{"productCategory": productCategory}],
@@ -335,7 +266,7 @@ async def get_product(id: str, productCode: str) -> dict:
         conn = pyodbc.connect(conn_str)
 
         product_query = "SELECT ProductCode, ProductId, ProductCategory, CreateDate, CreateBy FROM Product WHERE ProductId = ? AND ProductCode = ?"
-        product_detail_query = "SELECT ImagePath, ImageName, Price, BasePrice FROM ProductDetail WHERE ProductId = ? AND ProductCode = ?"
+        product_detail_query = "SELECT ImagePath, Price, BasePrice FROM ProductDetail WHERE ProductId = ? AND ProductCode = ?"
         product_diamonds_query = "SELECT Carat, Color, Cut, Clarity, Certificated, Amount FROM ProductDiamonds WHERE ProductId = ? AND ProductCode = ?"
         product_gems_query = (
             "SELECT * FROM ProductGems WHERE ProductId = ? AND ProductCode = ?"
