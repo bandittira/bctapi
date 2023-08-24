@@ -10,15 +10,15 @@ from typing import List, Dict
 from obs import *
 from obs import PutObjectHeader
 
-save_path = "D:\\BANCHANGTONG\\APIs\\bctAPIs\\images"
+save_path = "/root/bctapi/images"
 
-server = "DESKTOP-U71JKDK\\SQLEXPRESS"
+server = "ecs-c9a9"
 database = "banchangtong"
-username = ""
-password = ""
+username = "sa"
+password = "Littlemore1"
 app = FastAPI()
 
-conn_str = f"Driver={{SQL Server}};Server={server};Database={database};UID={username}"
+conn_str = f"Driver={{/opt/microsoft/msodbcsql18/lib64/libmsodbcsql-18.3.so.1.1}};Server={server};Database={database};UID={username};PWD={password};TrustServerCertificate=yes;"
 
 AK = "NYPVSW2I8OJV8H4F9O37"
 SK = "uOsWzZ2sjKovNZ0cGilH9XTkGUUNunP3xD0Uin1g"
@@ -148,7 +148,7 @@ async def update_product(
     time = datetime.datetime.now()
 
     filename = file.filename
-    with open("{0}\\{1}".format(save_path, filename), "wb+") as f:
+    with open("{0}/{1}".format(save_path, filename), "wb+") as f:
         f.write(file.file.read())
 
     try:
@@ -184,14 +184,16 @@ async def insert_product(
     gemstone: list,
     file: UploadFile = File(),
 ):
+    print(file)
+    print(type(file))
     time = datetime.datetime.now()
     filename = file.filename
-    with open("{0}\\{1}".format(save_path, filename), "wb+") as f:
-        f.write(file.file.read())
-
+    with open("{0}/{1}".format(save_path, filename), "wb+") as f:
+       f.write(file.file.read())
+    
     if file:
         file.file.seek(0)
-        key = f"images\\{file.filename}"
+        key = f"images/{file.filename}"
 
     # def get_presigned_url(
     #     key, expiration=3600
@@ -217,11 +219,11 @@ async def insert_product(
 
         # Fetch the latest ProductId based on ProductCategory
         cursor.execute(
-            "SELECT TOP 1 ProductId FROM [Product] WHERE ProductCategory = ? ORDER BY Id DESC",
-            (productCategory),
+            "SELECT TOP 1 ProductId FROM [Product] WHERE ProductCode = ? ORDER BY Id DESC",
+            (productCode),
         )
         row = cursor.fetchone()
-
+        print(row)
         if row:
             product_id = int(row[0]) + 1
             # Batch insert for Product, ProductDetail, and ProductMaterial
